@@ -9,7 +9,6 @@ export default async function DashboardPage() {
     redirect("/sign-in");
   }
 
-  // Find user's first org membership and redirect there
   const user = await db.platformUser.findUnique({
     where: { id: session.user.id },
     include: {
@@ -20,6 +19,12 @@ export default async function DashboardPage() {
     },
   });
 
+  // Super admins without an org go to the admin panel
+  if (user?.isSuperAdmin && !user.memberships[0]) {
+    redirect("/admin");
+  }
+
+  // Regular users with an org go to their org
   if (user?.memberships[0]) {
     redirect(`/org/${user.memberships[0].organization.slug}`);
   }

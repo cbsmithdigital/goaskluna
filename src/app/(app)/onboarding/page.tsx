@@ -2,13 +2,15 @@ import { auth } from "@/lib/auth/config";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { CreateOrgForm } from "@/components/onboarding/create-org-form";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Shield } from "lucide-react";
 
 export default async function OnboardingPage() {
   const session = await auth();
 
   if (!session?.user?.id) redirect("/sign-in");
 
-  // Check if user already has an org membership
   const user = await db.platformUser.findUnique({
     where: { id: session.user.id },
     include: {
@@ -36,6 +38,16 @@ export default async function OnboardingPage() {
           Create your organization to get started
         </p>
         <CreateOrgForm />
+        {user?.isSuperAdmin && (
+          <div className="mt-6">
+            <Link href="/admin">
+              <Button variant="outline" className="gap-2">
+                <Shield className="h-4 w-4" />
+                Go to Super Admin Panel
+              </Button>
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );
