@@ -17,8 +17,15 @@ export const authConfig = {
       const path = nextUrl.pathname;
 
       // Public routes - allow everyone
-      const publicRoutes = ["/", "/sign-in", "/sign-up"];
-      if (publicRoutes.some((r) => path === r || path.startsWith(r + "/"))) {
+      if (
+        path === "/" ||
+        path.startsWith("/sign-in") ||
+        path.startsWith("/sign-up") ||
+        path.startsWith("/api/auth") ||
+        path.startsWith("/api/webhooks") ||
+        path.startsWith("/api/widget") ||
+        path.startsWith("/widget")
+      ) {
         return true;
       }
 
