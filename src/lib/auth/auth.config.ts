@@ -11,6 +11,19 @@ export const authConfig = {
     newUser: "/onboarding",
   },
   callbacks: {
+    authorized({ auth, request: { nextUrl } }) {
+      const isLoggedIn = !!auth?.user;
+      const path = nextUrl.pathname;
+
+      // Public routes - allow everyone
+      const publicRoutes = ["/", "/sign-in", "/sign-up"];
+      if (publicRoutes.some((r) => path === r || path.startsWith(r + "/"))) {
+        return true;
+      }
+
+      // Everything else requires auth
+      return isLoggedIn;
+    },
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
