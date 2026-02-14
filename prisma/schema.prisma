@@ -1,0 +1,562 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// USERS & AUTHENTICATION
+// ============================================================
+
+model PlatformUser {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  passwordHash   String
+  name           String?
+  avatarUrl      String?
+  emailVerified  DateTime?
+  isSuperAdmin   Boolean   @default(false)
+
+  memberships    OrgMembership[]
+  conversations  Conversation[]
+  tickets        Ticket[]        @relation("TicketCreator")
+  assignedTickets Ticket[]       @relation("TicketAssignee")
+  auditLogs      AuditLog[]
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@map("platform_users")
+}
+
+// ============================================================
+// ORGANIZATIONS & MEMBERSHIP
+// ============================================================
+
+model Organization {
+  id              String    @id @default(cuid())
+  name            String
+  slug            String    @unique
+  logoUrl         String?
+
+  stripeCustomerId    String?   @unique
+  stripeSubscriptionId String?
+  billingPlanId       String?
+  billingEmail        String?
+
+  settings        Json      @default("{}")
+
+  includedMinutes Int       @default(0)
+  usedMinutes     Float     @default(0)
+  hardCutoff      Boolean   @default(false)
+  graceNotified   Boolean   @default(false)
+
+  memberships     OrgMembership[]
+  knowledgeBases  KnowledgeBase[]
+  agents          Agent[]
+  deployments     Deployment[]
+  conversations   Conversation[]
+  usageRecords    UsageRecord[]
+  invoices        Invoice[]
+  orgAgentInstalls OrgAgentInstall[]
+  tickets         Ticket[]
+  auditLogs       AuditLog[]
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("organizations")
+}
+
+enum OrgRole {
+  ORG_ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+model OrgMembership {
+  id             String       @id @default(cuid())
+  userId         String
+  orgId          String
+  role           OrgRole      @default(EMPLOYEE)
+  department     String?
+  location       String?
+
+  user           PlatformUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([userId, orgId])
+  @@index([orgId, role])
+  @@map("org_memberships")
+}
+
+// ============================================================
+// KNOWLEDGE BASES & DOCUMENTS
+// ============================================================
+
+enum KBType {
+  INTERNAL
+  PUBLIC
+}
+
+enum KBVisibility {
+  ALL_EMPLOYEES
+  MANAGERS_ONLY
+  HR_ONLY
+  PUBLIC
+}
+
+model KnowledgeBase {
+  id              String        @id @default(cuid())
+  orgId           String
+  name            String
+  description     String?
+  type            KBType        @default(INTERNAL)
+  visibility      KBVisibility  @default(ALL_EMPLOYEES)
+
+  elevenLabsKbId  String?
+  lastSyncedAt    DateTime?
+
+  organization    Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  documents       Document[]
+  agentKBLinks    AgentKBLink[]
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([orgId])
+  @@map("knowledge_bases")
+}
+
+enum DocStatus {
+  UPLOADING
+  PROCESSING
+  READY
+  FAILED
+  ARCHIVED
+}
+
+model Document {
+  id              String      @id @default(cuid())
+  knowledgeBaseId String
+
+  title           String
+  fileName        String
+  mimeType        String
+  fileSizeBytes   Int
+  sourceUrl       String?
+
+  blobUrl         String
+
+  status          DocStatus   @default(UPLOADING)
+  statusMessage   String?
+
+  visibilityOverride KBVisibility?
+
+  currentVersionId String?    @unique
+
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  currentVersion  DocVersion?   @relation("CurrentVersion", fields: [currentVersionId], references: [id])
+  versions        DocVersion[]  @relation("DocVersions")
+
+  uploadedById    String?
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([knowledgeBaseId, status])
+  @@map("documents")
+}
+
+model DocVersion {
+  id              String    @id @default(cuid())
+  documentId      String
+  versionNumber   Int
+
+  blobUrl         String
+  fileSizeBytes   Int
+
+  rawText         String?
+  processingTimeMs Int?
+
+  elevenLabsDocId String?
+
+  document        Document   @relation("DocVersions", fields: [documentId], references: [id], onDelete: Cascade)
+  currentFor      Document?  @relation("CurrentVersion")
+
+  createdAt       DateTime   @default(now())
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId])
+  @@map("doc_versions")
+}
+
+// ============================================================
+// AGENTS & DEPLOYMENTS
+// ============================================================
+
+model Agent {
+  id                  String    @id @default(cuid())
+  orgId               String
+
+  name                String
+  description         String?
+
+  elevenLabsAgentId   String?   @unique
+  voiceId             String?
+  modelId             String?
+
+  systemPrompt        String?
+  greetingMessage     String?
+
+  enablePiiGuardrails Boolean   @default(true)
+  enableEscalation    Boolean   @default(true)
+  escalationMessage   String?
+
+  maxSessionMinutes   Int       @default(15)
+  language            String    @default("en")
+  isPublic            Boolean   @default(false)
+  isActive            Boolean   @default(true)
+
+  organization        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  kbLinks             AgentKBLink[]
+  deployments         Deployment[]
+  conversations       Conversation[]
+  usageRecords        UsageRecord[]
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([orgId])
+  @@map("agents")
+}
+
+model AgentKBLink {
+  id              String        @id @default(cuid())
+  agentId         String
+  knowledgeBaseId String
+  priority        Int           @default(0)
+
+  agent           Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, knowledgeBaseId])
+  @@map("agent_kb_links")
+}
+
+enum DeploymentType {
+  WEB_WIDGET
+  STANDALONE
+  PWA
+  API
+}
+
+model Deployment {
+  id              String         @id @default(cuid())
+  orgId           String
+  agentId         String
+
+  name            String
+  type            DeploymentType @default(WEB_WIDGET)
+
+  widgetConfig    Json           @default("{}")
+  allowedOrigins  String[]       @default([])
+
+  requireAuth     Boolean        @default(true)
+
+  embedToken      String         @unique @default(cuid())
+
+  isActive        Boolean        @default(true)
+
+  organization    Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  agent           Agent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  conversations   Conversation[]
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([orgId])
+  @@index([embedToken])
+  @@map("deployments")
+}
+
+// ============================================================
+// CONVERSATIONS & MESSAGES
+// ============================================================
+
+enum ConversationStatus {
+  ACTIVE
+  COMPLETED
+  ERRORED
+  ESCALATED
+}
+
+model Conversation {
+  id                    String             @id @default(cuid())
+  orgId                 String
+  agentId               String
+  deploymentId          String?
+  userId                String?
+
+  elevenLabsConversationId String?  @unique
+
+  status                ConversationStatus @default(ACTIVE)
+  durationSeconds       Int?
+  billableMinutes       Float?
+
+  messageCount          Int                @default(0)
+  noAnswerCount         Int                @default(0)
+  wasEscalated          Boolean            @default(false)
+
+  rating                Int?
+  feedback              String?
+
+  organization          Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  agent                 Agent              @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  deployment            Deployment?        @relation(fields: [deploymentId], references: [id])
+  user                  PlatformUser?      @relation(fields: [userId], references: [id])
+  messages              ConversationMessage[]
+  usageRecord           UsageRecord?
+  tickets               Ticket[]
+
+  startedAt             DateTime           @default(now())
+  endedAt               DateTime?
+
+  @@index([orgId, agentId])
+  @@index([orgId, startedAt])
+  @@index([userId])
+  @@map("conversations")
+}
+
+enum MessageRole {
+  USER
+  AGENT
+  SYSTEM
+}
+
+model ConversationMessage {
+  id                String       @id @default(cuid())
+  conversationId    String
+
+  role              MessageRole
+  content           String
+
+  citedDocIds       String[]     @default([])
+  confidenceScore   Float?
+
+  wasNoAnswer       Boolean      @default(false)
+  wasEscalation     Boolean      @default(false)
+
+  durationMs        Int?
+
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt         DateTime     @default(now())
+
+  @@index([conversationId])
+  @@map("conversation_messages")
+}
+
+// ============================================================
+// USAGE & BILLING
+// ============================================================
+
+model UsageRecord {
+  id              String       @id @default(cuid())
+  orgId           String
+  agentId         String
+  conversationId  String       @unique
+
+  minutes         Float
+  costCents       Int
+
+  stripeMeterEventId String?
+  reported        Boolean      @default(false)
+
+  organization    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  agent           Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime     @default(now())
+
+  @@index([orgId, createdAt])
+  @@map("usage_records")
+}
+
+model BillingPlan {
+  id                String   @id @default(cuid())
+  name              String
+  stripePriceId     String   @unique
+  stripeMeterId     String?
+
+  basePriceCents    Int
+  includedMinutes   Int
+  perMinuteCents    Int
+
+  maxAgents         Int      @default(5)
+  maxKnowledgeBases Int      @default(10)
+  maxDocuments      Int      @default(100)
+  maxDocSizeMb      Int      @default(50)
+
+  isActive          Boolean  @default(true)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("billing_plans")
+}
+
+model Invoice {
+  id                String   @id @default(cuid())
+  orgId             String
+  stripeInvoiceId   String   @unique
+
+  amountCents       Int
+  status            String
+  periodStart       DateTime
+  periodEnd         DateTime
+
+  baseChargeCents   Int
+  usageChargeCents  Int
+  totalMinutes      Float
+
+  pdfUrl            String?
+
+  organization      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  createdAt         DateTime @default(now())
+
+  @@index([orgId, createdAt])
+  @@map("invoices")
+}
+
+// ============================================================
+// MARKETPLACE
+// ============================================================
+
+model MarketplaceAgent {
+  id              String    @id @default(cuid())
+
+  name            String
+  description     String
+  category        String
+  iconUrl         String?
+
+  systemPrompt    String
+  voiceId         String?
+  modelId         String?
+
+  elevenLabsAgentId String?
+  elevenLabsKbId    String?
+
+  isFreeTier      Boolean   @default(false)
+  additionalCostCentsPerMinute Int @default(0)
+
+  isPublished     Boolean   @default(false)
+  isFeatured      Boolean   @default(false)
+
+  installs        OrgAgentInstall[]
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("marketplace_agents")
+}
+
+model OrgAgentInstall {
+  id                  String           @id @default(cuid())
+  orgId               String
+  marketplaceAgentId  String
+
+  customGreeting      String?
+  customEscalation    String?
+  isActive            Boolean          @default(true)
+
+  agentId             String?
+
+  organization        Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  marketplaceAgent    MarketplaceAgent @relation(fields: [marketplaceAgentId], references: [id], onDelete: Cascade)
+
+  installedAt         DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@unique([orgId, marketplaceAgentId])
+  @@map("org_agent_installs")
+}
+
+// ============================================================
+// TICKETS & ESCALATION
+// ============================================================
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Ticket {
+  id              String         @id @default(cuid())
+  orgId           String
+  conversationId  String?
+  createdById     String?
+  assignedToId    String?
+
+  title           String
+  description     String
+  status          TicketStatus   @default(OPEN)
+  priority        TicketPriority @default(MEDIUM)
+
+  triggerMessage  String?
+
+  organization    Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversation    Conversation?  @relation(fields: [conversationId], references: [id])
+  createdBy       PlatformUser?  @relation("TicketCreator", fields: [createdById], references: [id])
+  assignedTo      PlatformUser?  @relation("TicketAssignee", fields: [assignedToId], references: [id])
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([orgId, status])
+  @@map("tickets")
+}
+
+// ============================================================
+// AUDIT LOG
+// ============================================================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  orgId       String?
+  userId      String
+
+  action      String
+  entityType  String
+  entityId    String?
+
+  metadata    Json     @default("{}")
+  ipAddress   String?
+  userAgent   String?
+
+  organization Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
+  user         PlatformUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+
+  @@index([orgId, createdAt])
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
