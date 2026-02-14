@@ -21,17 +21,28 @@ export default function SignInPage() {
     setLoading(true);
     setError("");
 
-    const result = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-    });
+    try {
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      });
 
-    if (result?.error) {
-      setError("Invalid email or password");
+      if (result?.error) {
+        setError(result.error === "CredentialsSignin"
+          ? "Invalid email or password"
+          : `Auth error: ${result.error}`);
+        setLoading(false);
+      } else if (result?.ok) {
+        router.push("/dashboard");
+        router.refresh();
+      } else {
+        setError(`Unexpected result: ${JSON.stringify(result)}`);
+        setLoading(false);
+      }
+    } catch (err) {
+      setError(`Exception: ${err instanceof Error ? err.message : String(err)}`);
       setLoading(false);
-    } else {
-      router.push("/dashboard");
     }
   }
 
